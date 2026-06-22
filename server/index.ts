@@ -1,0 +1,118 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import dotenv from 'dotenv'
+import cors from 'cors'
+import express from 'express'
+import { fetchIpLocation, fetchNearbyRestaurants, getMockRestaurants } from './amap.js'
+import { getRecommendations } from './ai.js'
+import type { RecommendRequest } from './types.js'
+
+dotenv.config({ override: false })
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const isProd = process.env.NODE_ENV === 'production'
+
+const app = express()
+const PORT = Number(process.env.PORT) || 3001
+
+app.use(cors())
+app.use(express.json())
+
+const AMAP_KEY = process.env.AMAP_KEY
+const AI_API_KEY = process.env.AI_API_KEY
+const AI_BASE_URL = process.env.AI_BASE_URL || 'https://api.deepseek.com/v1'
+const AI_MODEL = process.env.AI_MODEL || 'deepseek-chat'
+const MOCK_MODE =
+  process.env.MOCK_MODE === 'true' ||
+  !AMAP_KEY ||
+  AMAP_KEY.startsWith('your_')
+
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    mockMode: MOCK_MODE,
+    hasAmapKey: Boolean(AMAP_KEY),
+    hasAiKey: Boolean(AI_API_KEY),
+  })
+})
+
+app.get('/api/location/ip', async (_req, res) => {
+  try {
+    const location = await fetchIpLocation(AMAP_KEY)
+    res.json(location)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'IP 定位失败'
+    res.status(500).json({ error: message })
+  }
+})
+
+app.get('/api/restaurants', async (req, res) => {
+  const lat = Number(req.query.lat)
+  const lng = Number(req.query.lng)
+  const radius = Number(req.query.radius) || 2000
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    res.status(400).json({ error: '请提供有效的 lat 和 lng 参数' })
+    return
+  }
+
+  try {
+    if (MOCK_MODE) {
+      const restaurants = getMockRestaurants(lat, lng)
+      res.json({ restaurants, mockMode: true, count: restaurants.length })
+      return
+    }
+
+    const { restaurants, total } = await fetchNearbyRestaurants(lat, lng, radius, AMAP_KEY!)
+    res.json({ restaurants, mockMode: false, count: total })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '获取餐厅失败'
+    res.status(500).json({ error: message })
+  }
+})
+
+app.post('/api/recommend', async (req, res) => {
+  const body = req.body as RecommendRequest
+
+  if (!body.restaurants?.length) {
+    res.status(400).json({ error: '餐厅列表不能为空' })
+    return
+  }
+
+  try {
+    const result = await getRecommendations(
+      {
+        mood: body.mood || [],
+        tastes: body.tastes || [],
+        cuisines: body.cuisines || [],
+        budget: body.budget,
+        otherNotes: body.otherNotes,
+        historyHint: body.historyHint,
+        excludeNames: body.excludeNames,
+        restaurants: body.restaurants,
+      },
+      AI_API_KEY,
+      AI_BASE_URL,
+      AI_MODEL,
+    )
+
+    res.json(result)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '推荐失败'
+    res.status(500).json({ error: message })
+  }
+})
+
+if (isProd) {
+  const distPath = path.join(__dirname, '../dist')
+  app.use(express.static(distPath))
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🍜 今天吃什么 → http://0.0.0.0:${PORT}`)
+  console.log(`   高德: ${MOCK_MODE ? '模拟数据' : '真实 POI'} | AI: ${AI_API_KEY && !AI_API_KEY.startsWith('your_') ? '已配置' : '规则兜底'}`)
+})

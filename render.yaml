@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: jintian-chi-shenme
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MOCK_MODE
+        value: false
+      - key: AMAP_KEY
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://api.deepseek.com/v1
+      - key: AI_MODEL
+        value: deepseek-chat

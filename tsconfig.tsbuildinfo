@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/components/header.tsx","./src/components/loadingstate.tsx","./src/components/mealcalendar.tsx","./src/components/preferenceform.tsx","./src/components/restaurantcard.tsx","./src/hooks/usegeolocation.ts","./src/lib/storage.ts"],"version":"5.7.3"}
