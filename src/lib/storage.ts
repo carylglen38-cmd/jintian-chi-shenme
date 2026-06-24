@@ -83,13 +83,21 @@ function topItems(items: string[], limit = 5): string[] {
     .map(([k]) => k)
 }
 
+export function getRecentlyVisitedNames(withinDays = 7): string[] {
+  const cutoff = Date.now() - withinDays * 24 * 60 * 60 * 1000
+  const names = getMealHistory()
+    .filter((m) => m.timestamp >= cutoff)
+    .map((m) => m.restaurantName)
+  return [...new Set(names)]
+}
+
 export function getPreferenceProfile(): UserPreferenceProfile {
   const meals = getMealHistory()
   return {
     topCuisines: topItems(meals.flatMap((m) => m.cuisines)),
     topTastes: topItems(meals.flatMap((m) => m.tastes)),
     topMoods: topItems(meals.flatMap((m) => m.mood)),
-    recentRestaurants: [...new Set(meals.slice(0, 10).map((m) => m.restaurantName))],
+    recentRestaurants: getRecentlyVisitedNames(7),
     totalVisits: meals.length,
   }
 }
@@ -97,10 +105,8 @@ export function getPreferenceProfile(): UserPreferenceProfile {
 export function profileToPromptText(profile: UserPreferenceProfile): string {
   if (profile.totalVisits === 0) return ''
   const parts: string[] = []
-  if (profile.topCuisines.length) parts.push(`常吃：${profile.topCuisines.join('、')}`)
+  if (profile.topCuisines.length) parts.push(`常吃菜系：${profile.topCuisines.join('、')}`)
   if (profile.topTastes.length) parts.push(`口味倾向：${profile.topTastes.join('、')}`)
-  if (profile.recentRestaurants.length) {
-    parts.push(`最近去过：${profile.recentRestaurants.slice(0, 5).join('、')}`)
-  }
+  if (profile.topMoods.length) parts.push(`常见心情：${profile.topMoods.join('、')}`)
   return parts.join('；')
 }

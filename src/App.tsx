@@ -6,7 +6,7 @@ import { LoadingState } from './components/LoadingState'
 import { MealCalendar } from './components/MealCalendar'
 import { RestaurantCard } from './components/RestaurantCard'
 import { useGeolocation } from './hooks/useGeolocation'
-import { getPreferenceProfile, profileToPromptText, recordMealVisit } from './lib/storage'
+import { getPreferenceProfile, getRecentlyVisitedNames, profileToPromptText, recordMealVisit } from './lib/storage'
 import {
   MOOD_PRESETS,
   type AppStep,
@@ -47,11 +47,23 @@ export default function App() {
   const [locationCity, setLocationCity] = useState<string | null>(null)
   const [loadingMessage, setLoadingMessage] = useState('')
   const [recordedName, setRecordedName] = useState<string | null>(null)
+  const [sessionExcludedNames, setSessionExcludedNames] = useState<string[]>([])
+  const [poolExhausted, setPoolExhausted] = useState(false)
+
+  const countAvailableRestaurants = useCallback(
+    (excluded: string[]) => {
+      const blocked = new Set([...excluded, ...getRecentlyVisitedNames(7)])
+      return restaurants.filter((r) => !blocked.has(r.name)).length
+    },
+    [restaurants],
+  )
 
   const loadRestaurants = useCallback(async (latitude: number, longitude: number) => {
     setLoadingMessage('正在搜索附近餐厅…（首次打开可能需等几秒）')
     setStep('loading')
     setError(null)
+    setSessionExcludedNames([])
+    setPoolExhausted(false)
     try {
       const data = await fetchRestaurants(latitude, longitude)
       setRestaurants(data.restaurants)
@@ -97,6 +109,7 @@ export default function App() {
     if (!excludeNames?.length) setRecordedName(null)
 
     const profile = getPreferenceProfile()
+    const cooldownNames = getRecentlyVisitedNames(7)
     const result = await fetchRecommendations({
       mood: getEffectiveMoods(),
       tastes,
@@ -105,16 +118,20 @@ export default function App() {
       otherNotes: otherNotes.trim() || undefined,
       historyHint: profileToPromptText(profile) || undefined,
       excludeNames,
+      cooldownNames,
       restaurants,
     })
     setRecommendations(result.recommendations)
     setUsedMockAi(result.usedMock)
     setAiFallbackReason(result.fallbackReason ?? null)
+    setPoolExhausted(countAvailableRestaurants(excludeNames ?? []) < 5)
     setStep('results')
   }
 
   const handleDecide = async () => {
     try {
+      setSessionExcludedNames([])
+      setPoolExhausted(false)
       await runRecommend()
     } catch (err) {
       setError(err instanceof Error ? err.message : '推荐失败')
@@ -139,10 +156,28 @@ export default function App() {
   }
 
   const handleRetry = async () => {
+    const newExcluded = [...sessionExcludedNames, ...recommendations.map((r) => r.name)]
+    if (countAvailableRestaurants(newExcluded) < 5) {
+      setPoolExhausted(true)
+      return
+    }
+
     try {
-      await runRecommend(recommendations.map((r) => r.name))
+      setSessionExcludedNames(newExcluded)
+      await runRecommend(newExcluded)
     } catch (err) {
       setError(err instanceof Error ? err.message : '换一批失败')
+      setStep('error')
+    }
+  }
+
+  const handleClearExclusions = async () => {
+    try {
+      setSessionExcludedNames([])
+      setPoolExhausted(false)
+      await runRecommend()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '推荐失败')
       setStep('error')
     }
   }
@@ -208,7 +243,7 @@ export default function App() {
               <div className="space-y-4">
                 <div className="rounded-2xl bg-gradient-to-r from-brand-50 to-white px-4 py-3 ring-1 ring-brand-100/80">
                   <p className="text-sm text-stone-600">
-                    附近 <span className="font-bold text-brand-600">{restaurants.length}</span> 家可选
+                    约 4 公里内 <span className="font-bold text-brand-600">{restaurants.length}</span> 家可选
                     {restaurantTotal > restaurants.length && (
                       <span className="text-stone-400"> / 共{restaurantTotal}家</span>
                     )}
@@ -259,6 +294,12 @@ export default function App() {
                   </div>
                 )}
 
+                {poolExhausted && (
+                  <div className="rounded-xl bg-amber-50 px-3 py-2 text-center text-xs text-amber-800 ring-1 ring-amber-200">
+                    附近符合条件的店快看完了，可「刷新附近」或「清空排除再来」
+                  </div>
+                )}
+
                 {recommendations.map((rec, index) => {
                   const restaurant = findRestaurant(rec.name)
                   return (
@@ -272,21 +313,33 @@ export default function App() {
                   )
                 })}
 
-                <div className="flex gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleRetry}
-                    className="flex-1 rounded-xl bg-white py-3 font-semibold text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"
-                  >
-                    换一批
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRefresh}
-                    className="flex-1 rounded-xl bg-stone-100 py-3 font-semibold text-stone-600 hover:bg-stone-200"
-                  >
-                    刷新附近
-                  </button>
+                <div className="flex flex-col gap-3 pt-2">
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={handleRetry}
+                      disabled={poolExhausted}
+                      className="flex-1 rounded-xl bg-white py-3 font-semibold text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      换一批
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRefresh}
+                      className="flex-1 rounded-xl bg-stone-100 py-3 font-semibold text-stone-600 hover:bg-stone-200"
+                    >
+                      刷新附近
+                    </button>
+                  </div>
+                  {poolExhausted && (
+                    <button
+                      type="button"
+                      onClick={handleClearExclusions}
+                      className="w-full rounded-xl bg-brand-50 py-3 font-semibold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-100"
+                    >
+                      清空排除再来
+                    </button>
+                  )}
                 </div>
               </div>
             )}

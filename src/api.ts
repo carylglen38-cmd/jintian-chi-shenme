@@ -32,7 +32,7 @@ export async function fetchRestaurants(lat: number, lng: number): Promise<{
   const params = new URLSearchParams({
     lat: String(lat),
     lng: String(lng),
-    radius: '2000',
+    radius: '4000',
   })
 
   const url = `/api/restaurants?${params}`
@@ -52,6 +52,7 @@ export interface RecommendPayload {
   otherNotes?: string
   historyHint?: string
   excludeNames?: string[]
+  cooldownNames?: string[]
   restaurants: Restaurant[]
 }
 

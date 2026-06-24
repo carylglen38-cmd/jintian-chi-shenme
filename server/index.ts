@@ -62,7 +62,7 @@ app.get('/api/location/ip', async (req, res) => {
 app.get('/api/restaurants', async (req, res) => {
   const lat = Number(req.query.lat)
   const lng = Number(req.query.lng)
-  const radius = Number(req.query.radius) || 2000
+  const radius = Number(req.query.radius) || 4000
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     res.status(400).json({ error: '请提供有效的 lat 和 lng 参数' })
@@ -102,6 +102,7 @@ app.post('/api/recommend', async (req, res) => {
         otherNotes: body.otherNotes,
         historyHint: body.historyHint,
         excludeNames: body.excludeNames,
+        cooldownNames: body.cooldownNames,
         restaurants: body.restaurants,
       },
       AI_API_KEY,

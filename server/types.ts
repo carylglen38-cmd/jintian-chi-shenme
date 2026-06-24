@@ -17,6 +17,7 @@ export interface RecommendRequest {
   otherNotes?: string
   historyHint?: string
   excludeNames?: string[]
+  cooldownNames?: string[]
   restaurants: Restaurant[]
 }
 
