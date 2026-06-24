@@ -37,6 +37,14 @@
   .preference-input {
     @apply w-full rounded-xl border-0 bg-stone-50 px-3 py-2 text-sm text-stone-700 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-300/50;
   }
+
+  .preference-style-tile {
+    @apply flex flex-col items-center justify-center rounded-xl bg-stone-50 px-2 py-3 text-stone-600 transition-all active:scale-95;
+  }
+
+  .preference-mood-chip {
+    @apply flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-stone-50 transition-all active:scale-95;
+  }
 }
 
 @layer utilities {

@@ -1,108 +1,173 @@
+import { useState } from 'react'
 import {
-  BUDGET_PRESETS,
-  CUISINE_MORE,
-  CUISINE_PRESETS,
+  BUDGET_OPTIONS,
+  DINING_STYLES,
+  FOOD_PRESETS,
+  MAX_FOOD_PREFS,
   MOOD_PRESETS,
-  TASTE_PRESETS,
+  NOTE_QUICK_CHIPS,
+  type BudgetId,
+  type DiningStyleId,
 } from '../types'
+import { detectLocationInNotes, getBudgetLabel, getSuggestedBudget, summarizePreferences } from '../lib/preferences'
 
 interface PreferenceFormProps {
+  diningStyle: DiningStyleId
+  foodPrefs: string[]
+  budget: BudgetId
+  budgetManual: boolean
   moods: string[]
-  tastes: string[]
-  cuisines: string[]
-  budget: string
-  moodCustom: string
   otherNotes: string
+  onDiningStyleChange: (style: DiningStyleId) => void
+  onFoodPrefsChange: (v: string[]) => void
+  onBudgetChange: (v: BudgetId, manual: boolean) => void
   onMoodsChange: (v: string[]) => void
-  onTastesChange: (v: string[]) => void
-  onCuisinesChange: (v: string[]) => void
-  onBudgetChange: (v: string) => void
-  onMoodCustomChange: (v: string) => void
   onOtherNotesChange: (v: string) => void
 }
 
-function toggleItem(list: string[], item: string, multi = true) {
-  if (!multi) return list.includes(item) ? [] : [item]
-  return list.includes(item) ? list.filter((s) => s !== item) : [...list, item]
-}
-
 export function PreferenceForm({
-  moods,
-  tastes,
-  cuisines,
+  diningStyle,
+  foodPrefs,
   budget,
-  moodCustom,
+  budgetManual,
+  moods,
   otherNotes,
-  onMoodsChange,
-  onTastesChange,
-  onCuisinesChange,
+  onDiningStyleChange,
+  onFoodPrefsChange,
   onBudgetChange,
-  onMoodCustomChange,
+  onMoodsChange,
   onOtherNotesChange,
 }: PreferenceFormProps) {
-  const moodLabels = MOOD_PRESETS.map((m) => m.label)
-  const effectiveMoods = [
-    ...moods.filter((m) => moodLabels.includes(m as (typeof moodLabels)[number])),
-    ...(moodCustom.trim() ? [moodCustom.trim()] : []),
-  ]
+  const [budgetOpen, setBudgetOpen] = useState(false)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [foodHint, setFoodHint] = useState('')
+
+  const locationHint = detectLocationInNotes(otherNotes)
+  const summary = summarizePreferences(diningStyle, foodPrefs, budget)
+
+  const toggleFood = (item: string) => {
+    if (foodPrefs.includes(item)) {
+      onFoodPrefsChange(foodPrefs.filter((f) => f !== item))
+      setFoodHint('')
+      return
+    }
+    if (foodPrefs.length >= MAX_FOOD_PREFS) {
+      setFoodHint(`选 ${MAX_FOOD_PREFS} 个就好，选太多反而难挑`)
+      return
+    }
+    setFoodHint('')
+    onFoodPrefsChange([...foodPrefs, item])
+  }
+
+  const toggleMood = (label: string) => {
+    if (label === '随便') {
+      onMoodsChange([])
+      return
+    }
+    onMoodsChange(moods.includes(label) ? [] : [label])
+  }
+
+  const appendNoteChip = (chip: string) => {
+    const parts = otherNotes.trim() ? otherNotes.trim().split(/\s+/) : []
+    if (parts.includes(chip)) {
+      onOtherNotesChange(parts.filter((p) => p !== chip).join(' '))
+    } else {
+      onOtherNotesChange([...parts, chip].join(' '))
+    }
+    if (!notesOpen) setNotesOpen(true)
+  }
+
+  const handleStyleChange = (style: DiningStyleId) => {
+    onDiningStyleChange(style)
+    if (!budgetManual) {
+      onBudgetChange(getSuggestedBudget(style), false)
+    }
+  }
 
   return (
     <div className="space-y-3">
       <section className="preference-card">
-        <SectionTitle icon="💭" title="今天心情" hint="可多选" />
-        <div className="grid grid-cols-3 gap-2">
+        <SectionTitle icon="🍽" title="这顿想怎么吃？" hint="选一个就够" />
+        <div className="grid grid-cols-2 gap-2">
+          {DINING_STYLES.map((s) => {
+            const active = diningStyle === s.id
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => handleStyleChange(s.id)}
+                className={`preference-style-tile ${active ? 'preference-tile-active' : ''}`}
+              >
+                <span className="text-lg leading-none">{s.emoji}</span>
+                <span className="mt-1 text-sm font-semibold">{s.id}</span>
+                <span className="mt-0.5 text-[10px] text-stone-400">{s.subtitle}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setBudgetOpen((v) => !v)}
+          className="mt-3 w-full text-left text-xs text-stone-500"
+        >
+          建议人均 {getBudgetLabel(budget)}
+          {budgetManual ? '（已手动调整）' : ''} ·{' '}
+          <span className="text-brand-600">{budgetOpen ? '收起' : '点我改'}</span>
+        </button>
+
+        {budgetOpen && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {BUDGET_OPTIONS.map((b) => {
+              const active = budget === b.id
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => onBudgetChange(b.id, true)}
+                  className={`preference-pill ${active ? 'preference-pill-active' : ''}`}
+                >
+                  {b.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="preference-card">
+        <SectionTitle icon="🤤" title="有点馋…" hint="可不选" />
+        <div className="flex flex-wrap gap-1.5">
+          {FOOD_PRESETS.map((item) => {
+            const active = foodPrefs.includes(item)
+            return (
+              <button
+                key={item}
+                type="button"
+                onClick={() => toggleFood(item)}
+                className={`preference-pill ${active ? 'preference-pill-active' : ''}`}
+              >
+                {item}
+              </button>
+            )
+          })}
+        </div>
+        {foodHint && <p className="mt-2 text-xs text-amber-600">{foodHint}</p>}
+      </section>
+
+      <section className="preference-card">
+        <SectionTitle icon="💭" title="今天状态" hint="可选" />
+        <div className="flex gap-2">
           {MOOD_PRESETS.map((m) => {
-            const active = moods.includes(m.label)
+            const active = m.label === '随便' ? moods.length === 0 : moods.includes(m.label)
             return (
               <button
                 key={m.label}
                 type="button"
-                onClick={() => onMoodsChange(toggleItem(moods, m.label))}
-                className={`preference-tile ${active ? 'preference-tile-active' : ''}`}
+                onClick={() => toggleMood(m.label)}
+                className={`preference-mood-chip ${active ? 'preference-tile-active' : ''}`}
               >
-                <span className="text-xl leading-none">{m.emoji}</span>
-                <span className="mt-1 text-xs font-medium">{m.label}</span>
-              </button>
-            )
-          })}
-        </div>
-        <input
-          type="text"
-          value={moodCustom}
-          onChange={(e) => onMoodCustomChange(e.target.value)}
-          placeholder="或自己写…"
-          className="preference-input mt-2"
-        />
-      </section>
-
-      <section className="preference-card">
-        <SectionTitle icon="👅" title="口味 & 预算" />
-        <div className="flex flex-wrap gap-1.5">
-          {TASTE_PRESETS.map((t) => {
-            const active = tastes.includes(t)
-            return (
-              <button
-                key={t}
-                type="button"
-                onClick={() => onTastesChange(toggleItem(tastes, t))}
-                className={`preference-pill ${active ? 'preference-pill-active' : ''}`}
-              >
-                {t}
-              </button>
-            )
-          })}
-        </div>
-        <div className="mt-3 flex gap-1.5">
-          {BUDGET_PRESETS.map((b) => {
-            const active = budget === b
-            return (
-              <button
-                key={b}
-                type="button"
-                onClick={() => onBudgetChange(active ? '' : b)}
-                className={`preference-pill flex-1 ${active ? 'preference-pill-active' : ''}`}
-              >
-                {b === '30内' ? '¥30' : b === '50左右' ? '¥50' : b === '100+' ? '¥100+' : '不限'}
+                <span className="text-lg">{m.emoji}</span>
               </button>
             )
           })}
@@ -110,42 +175,57 @@ export function PreferenceForm({
       </section>
 
       <section className="preference-card">
-        <SectionTitle icon="🍜" title="想吃啥" hint="可多选" />
-        <div className="flex flex-wrap gap-1.5">
-          {[...CUISINE_PRESETS, ...CUISINE_MORE].map((c) => {
-            const active = cuisines.includes(c)
-            return (
-              <button
-                key={c}
-                type="button"
-                onClick={() => onCuisinesChange(toggleItem(cuisines, c))}
-                className={`preference-pill ${active ? 'preference-pill-active' : ''}`}
-              >
-                {c}
-              </button>
-            )
-          })}
-        </div>
+        {!notesOpen ? (
+          <button
+            type="button"
+            onClick={() => setNotesOpen(true)}
+            className="flex w-full items-center gap-2 text-sm text-stone-500"
+          >
+            <span className="text-base">＋</span>
+            <span>补充一句（可选）</span>
+            {locationHint && (
+              <span className="ml-auto text-xs text-brand-600">将按「{locationHint}」附近推</span>
+            )}
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <SectionTitle icon="✏️" title="补充一句" hint="可选" />
+            <input
+              type="text"
+              value={otherNotes}
+              onChange={(e) => onOtherNotesChange(e.target.value)}
+              placeholder="例：中关村附近、要停车、不吃香菜…"
+              className="preference-input"
+            />
+            {locationHint && (
+              <p className="text-xs text-brand-600">将按「{locationHint}」附近 3km 内精准推荐</p>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {NOTE_QUICK_CHIPS.map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => appendNoteChip(chip)}
+                  className={`preference-pill text-xs ${
+                    otherNotes.includes(chip) ? 'preference-pill-active' : ''
+                  }`}
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setNotesOpen(false)}
+              className="text-xs text-stone-400"
+            >
+              收起
+            </button>
+          </div>
+        )}
       </section>
 
-      <section className="preference-card">
-        <SectionTitle icon="✏️" title="其他要求" />
-        <textarea
-          value={otherNotes}
-          onChange={(e) => onOtherNotesChange(e.target.value)}
-          placeholder="例：要停车、安静、不吃香菜、打包带走…"
-          rows={2}
-          className="preference-input resize-none"
-        />
-      </section>
-
-      {(effectiveMoods.length > 0 || tastes.length > 0 || cuisines.length > 0 || budget || otherNotes) && (
-        <p className="px-1 text-center text-xs text-stone-400">
-          {[effectiveMoods.join('·'), tastes.join('·'), cuisines.join('·'), budget]
-            .filter((s) => s)
-            .join('  ')}
-        </p>
-      )}
+      {summary && <p className="px-1 text-center text-xs text-stone-400">{summary}</p>}
     </div>
   )
 }

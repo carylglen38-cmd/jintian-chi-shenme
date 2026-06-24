@@ -6,11 +6,17 @@ import { LoadingState } from './components/LoadingState'
 import { MealCalendar } from './components/MealCalendar'
 import { RestaurantCard } from './components/RestaurantCard'
 import { useGeolocation } from './hooks/useGeolocation'
+import {
+  buildMoodPayload,
+  formatBudgetForPrompt,
+  splitFoodPreferences,
+} from './lib/preferences'
 import { getPreferenceProfile, getRecentlyVisitedNames, profileToPromptText, recordMealVisit } from './lib/storage'
 import {
-  MOOD_PRESETS,
   type AppStep,
   type AppView,
+  type BudgetId,
+  type DiningStyleId,
   type Recommendation,
   type Restaurant,
 } from './types'
@@ -26,25 +32,19 @@ export default function App() {
   const [restaurantTotal, setRestaurantTotal] = useState(0)
   const [mockMode, setMockMode] = useState(false)
 
+  const [diningStyle, setDiningStyle] = useState<DiningStyleId>('随便')
+  const [foodPrefs, setFoodPrefs] = useState<string[]>([])
+  const [budget, setBudget] = useState<BudgetId>('不限')
+  const [budgetManual, setBudgetManual] = useState(false)
   const [moods, setMoods] = useState<string[]>([])
-  const [tastes, setTastes] = useState<string[]>([])
-  const [cuisines, setCuisines] = useState<string[]>([])
-  const [budget, setBudget] = useState('')
-  const [moodCustom, setMoodCustom] = useState('')
   const [otherNotes, setOtherNotes] = useState('')
-
-  const getEffectiveMoods = () => {
-    const labels = MOOD_PRESETS.map((m) => m.label)
-    return [
-      ...moods.filter((m) => labels.includes(m as (typeof labels)[number])),
-      ...(moodCustom.trim() ? [moodCustom.trim()] : []),
-    ]
-  }
 
   const [recommendations, setRecommendations] = useState<Recommendation[]>([])
   const [usedMockAi, setUsedMockAi] = useState(false)
   const [aiFallbackReason, setAiFallbackReason] = useState<string | null>(null)
   const [locationCity, setLocationCity] = useState<string | null>(null)
+  const [locationAnchorName, setLocationAnchorName] = useState<string | null>(null)
+  const [locationAnchorFailed, setLocationAnchorFailed] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState('')
   const [recordedName, setRecordedName] = useState<string | null>(null)
   const [sessionExcludedNames, setSessionExcludedNames] = useState<string[]>([])
@@ -64,6 +64,8 @@ export default function App() {
     setError(null)
     setSessionExcludedNames([])
     setPoolExhausted(false)
+    setLocationAnchorName(null)
+    setLocationAnchorFailed(false)
     try {
       const data = await fetchRestaurants(latitude, longitude)
       setRestaurants(data.restaurants)
@@ -108,23 +110,41 @@ export default function App() {
     setError(null)
     if (!excludeNames?.length) setRecordedName(null)
 
+    const { tastes, cuisines } = splitFoodPreferences(foodPrefs)
     const profile = getPreferenceProfile()
     const cooldownNames = getRecentlyVisitedNames(7)
+
     const result = await fetchRecommendations({
-      mood: getEffectiveMoods(),
+      mood: buildMoodPayload(diningStyle, moods),
       tastes,
       cuisines,
-      budget: budget || undefined,
+      diningStyle: diningStyle !== '随便' ? diningStyle : undefined,
+      budget: formatBudgetForPrompt(budget),
       otherNotes: otherNotes.trim() || undefined,
       historyHint: profileToPromptText(profile) || undefined,
+      locationCity: locationCity ?? undefined,
+      userLat: lat ?? undefined,
+      userLng: lng ?? undefined,
       excludeNames,
       cooldownNames,
       restaurants,
     })
+
     setRecommendations(result.recommendations)
     setUsedMockAi(result.usedMock)
     setAiFallbackReason(result.fallbackReason ?? null)
-    setPoolExhausted(countAvailableRestaurants(excludeNames ?? []) < 5)
+    setLocationAnchorName(result.locationAnchor?.name ?? null)
+    setLocationAnchorFailed(Boolean(result.locationAnchorFailed))
+    if (result.restaurants?.length) {
+      setRestaurants(result.restaurants)
+      setRestaurantTotal(result.restaurants.length)
+    }
+    setPoolExhausted(
+      (result.restaurants ?? restaurants).filter(
+        (r) =>
+          ![...new Set([...(excludeNames ?? []), ...cooldownNames])].includes(r.name),
+      ).length < 5,
+    )
     setStep('results')
   }
 
@@ -140,15 +160,17 @@ export default function App() {
   }
 
   const handleGo = (restaurant: Restaurant) => {
+    const { tastes, cuisines } = splitFoodPreferences(foodPrefs)
     recordMealVisit({
       restaurantId: restaurant.id,
       restaurantName: restaurant.name,
       restaurantType: restaurant.type,
       address: restaurant.address,
-      mood: getEffectiveMoods(),
+      mood: buildMoodPayload(diningStyle, moods),
       tastes,
       cuisines,
-      budget: budget || undefined,
+      diningStyle: diningStyle !== '随便' ? diningStyle : undefined,
+      budget: budget !== '不限' ? budget : undefined,
       otherNotes: otherNotes.trim() || undefined,
     })
     setRecordedName(restaurant.name)
@@ -186,6 +208,11 @@ export default function App() {
     if (lat !== null && lng !== null) {
       loadRestaurants(lat, lng)
     }
+  }
+
+  const handleBudgetChange = (value: BudgetId, manual: boolean) => {
+    setBudget(value)
+    setBudgetManual(manual)
   }
 
   const findRestaurant = (name: string) => restaurants.find((r) => r.name === name)
@@ -252,17 +279,16 @@ export default function App() {
                 </div>
 
                 <PreferenceForm
-                  moods={moods}
-                  tastes={tastes}
-                  cuisines={cuisines}
+                  diningStyle={diningStyle}
+                  foodPrefs={foodPrefs}
                   budget={budget}
-                  moodCustom={moodCustom}
+                  budgetManual={budgetManual}
+                  moods={moods}
                   otherNotes={otherNotes}
+                  onDiningStyleChange={setDiningStyle}
+                  onFoodPrefsChange={setFoodPrefs}
+                  onBudgetChange={handleBudgetChange}
                   onMoodsChange={setMoods}
-                  onTastesChange={setTastes}
-                  onCuisinesChange={setCuisines}
-                  onBudgetChange={setBudget}
-                  onMoodCustomChange={setMoodCustom}
                   onOtherNotesChange={setOtherNotes}
                 />
 
@@ -280,6 +306,18 @@ export default function App() {
 
             {step === 'results' && (
               <div className="space-y-4">
+                {locationAnchorName && (
+                  <div className="rounded-xl bg-brand-50 px-3 py-2 text-center text-xs text-brand-800 ring-1 ring-brand-200">
+                    已按「{locationAnchorName}」附近 3km 内调整推荐
+                  </div>
+                )}
+
+                {locationAnchorFailed && (
+                  <div className="rounded-xl bg-amber-50 px-3 py-2 text-center text-xs text-amber-800 ring-1 ring-amber-200">
+                    没认出备注里的地点，仍按当前位置推荐
+                  </div>
+                )}
+
                 {usedMockAi && (
                   <div className="rounded-xl bg-blue-50 px-3 py-2 text-center text-xs text-blue-700 ring-1 ring-blue-200">
                     {aiFallbackReason && aiFallbackReason !== 'no_key'

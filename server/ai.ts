@@ -40,7 +40,25 @@ function scoreRestaurant(r: Restaurant, keywords: string): number {
 }
 
 function getKeywords(req: RecommendRequest): string {
-  return [...req.cuisines, ...req.tastes, ...req.mood].join(' ')
+  const styleHint =
+    req.diningStyle && req.diningStyle !== '随便' ? (DINING_STYLE_HINTS[req.diningStyle] ?? '') : ''
+  return [styleHint, ...req.cuisines, ...req.tastes, ...req.mood].filter(Boolean).join(' ')
+}
+
+const DINING_STYLE_HINTS: Record<string, string> = {
+  简单吃吃: '快餐 面食 饺子 便当 小吃 简餐 轻食',
+  烟火气: '烧烤 麻辣烫 小吃 大排档 串 火锅 烤肉',
+  随便吃吃: '餐厅 美食 吃饭',
+  漂亮饭: '西餐 日料 咖啡 轻食 创意菜 环境',
+  精致大餐: '西餐 日料 粤菜 火锅 私房菜 正式',
+}
+
+const DINING_STYLE_DESC: Record<string, string> = {
+  简单吃吃: '（填饱就行，快速省事）',
+  烟火气: '（热乎接地气，大排档感）',
+  随便吃吃: '（不折腾，好吃就行）',
+  漂亮饭: '（环境好，适合拍照）',
+  精致大餐: '（值得专程，可以慢慢吃）',
 }
 
 function getBlockedNames(req: RecommendRequest): Set<string> {
@@ -204,13 +222,29 @@ function formatCandidateList(candidates: Restaurant[]): string {
 function buildUserPrompt(req: RecommendRequest): string {
   const candidates = pickCandidates(req)
   const restaurantList = formatCandidateList(candidates)
+  const foodPrefs = [...new Set([...req.tastes, ...req.cuisines])]
 
-  const lines = [
-    `心情：${req.mood.length ? req.mood.join('、') : '随便'}`,
-    `口味：${req.tastes.length ? req.tastes.join('、') : '不限'}`,
-    `想吃：${req.cuisines.length ? req.cuisines.join('、') : '不限'}`,
-    `预算：${req.budget || '不限'}`,
-  ]
+  const lines: string[] = []
+
+  if (req.locationAnchor) {
+    lines.push(
+      `用户指定就餐区域：${req.locationAnchor.name}附近（以下距离均相对该地点，优先推荐 3km 内）`,
+    )
+  }
+
+  if (req.diningStyle && req.diningStyle !== '随便') {
+    const desc = DINING_STYLE_DESC[req.diningStyle] ?? ''
+    const budgetPart = req.budget ? `，${req.budget}` : ''
+    lines.push(`这顿怎么吃：${req.diningStyle}${desc}${budgetPart}`)
+  } else {
+    lines.push(`这顿怎么吃：随便${req.budget ? `，${req.budget}` : ''}`)
+  }
+
+  lines.push(`有点馋：${foodPrefs.length ? foodPrefs.join('、') : '不限'}`)
+
+  const pureMoods = req.mood.filter((m) => m !== req.diningStyle && !DINING_STYLE_DESC[m])
+  lines.push(`今天状态：${pureMoods.length ? pureMoods.join('、') : '未选择'}`)
+
   if (req.otherNotes) lines.push(`其他要求：${req.otherNotes}`)
   if (req.historyHint) lines.push(`历史偏好：${req.historyHint}`)
   if (req.cooldownNames?.length) {
@@ -220,9 +254,13 @@ function buildUserPrompt(req: RecommendRequest): string {
     lines.push(`不要推荐以下餐厅（用户刚看过）：${req.excludeNames.join('、')}`)
   }
 
+  const distanceLabel = req.locationAnchor
+    ? `距${req.locationAnchor.name}`
+    : '按距离分段列出候选'
+
   return `${lines.join('\n')}
 
-附近餐厅（共 ${req.restaurants.length} 家，按距离分段列出候选）：
+附近餐厅（共 ${req.restaurants.length} 家，${distanceLabel}）：
 ${restaurantList}
 
 请推荐最适合的 ${TOP_N} 家，注意距离分散，返回 JSON。`

@@ -9,13 +9,24 @@ export interface Restaurant {
   tel?: string
 }
 
+export interface LocationAnchor {
+  name: string
+  lat: number
+  lng: number
+}
+
 export interface RecommendRequest {
   mood: string[]
   tastes: string[]
   cuisines: string[]
+  diningStyle?: string
   budget?: string
   otherNotes?: string
   historyHint?: string
+  locationCity?: string
+  userLat?: number
+  userLng?: number
+  locationAnchor?: LocationAnchor
   excludeNames?: string[]
   cooldownNames?: string[]
   restaurants: Restaurant[]
@@ -30,4 +41,7 @@ export interface Recommendation {
 export interface RecommendResponse {
   recommendations: Recommendation[]
   usedMock?: boolean
+  fallbackReason?: string
+  locationAnchor?: { name: string }
+  locationAnchorFailed?: boolean
 }

@@ -48,9 +48,13 @@ export interface RecommendPayload {
   mood: string[]
   tastes: string[]
   cuisines: string[]
+  diningStyle?: string
   budget?: string
   otherNotes?: string
   historyHint?: string
+  locationCity?: string
+  userLat?: number
+  userLng?: number
   excludeNames?: string[]
   cooldownNames?: string[]
   restaurants: Restaurant[]
@@ -58,7 +62,14 @@ export interface RecommendPayload {
 
 export async function fetchRecommendations(
   payload: RecommendPayload,
-): Promise<{ recommendations: Recommendation[]; usedMock: boolean; fallbackReason?: string }> {
+): Promise<{
+  recommendations: Recommendation[]
+  usedMock: boolean
+  fallbackReason?: string
+  locationAnchor?: { name: string }
+  locationAnchorFailed?: boolean
+  restaurants?: Restaurant[]
+}> {
   const response = await fetch('/api/recommend', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

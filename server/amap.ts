@@ -66,9 +66,72 @@ function mapPoi(poi: AmapPoi): Restaurant {
     type,
     address: poi.address || '地址未知',
     distance,
-    distanceText: distance < 1000 ? `${distance}m` : `${(distance / 1000).toFixed(1)}km`,
+    distanceText: formatDistanceText(distance),
     location: poi.location,
     tel: Array.isArray(poi.tel) ? poi.tel[0] : poi.tel,
+  }
+}
+
+export function formatDistanceText(distance: number): string {
+  return distance < 1000 ? `${distance}m` : `${(distance / 1000).toFixed(1)}km`
+}
+
+export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000
+  const toRad = (deg: number) => (deg * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)))
+}
+
+export function withDistancesFromPoint(
+  restaurants: Restaurant[],
+  lat: number,
+  lng: number,
+): Restaurant[] {
+  return restaurants
+    .map((r) => {
+      const parts = r.location.split(',')
+      const rLng = Number(parts[0])
+      const rLat = Number(parts[1])
+      if (!Number.isFinite(rLat) || !Number.isFinite(rLng)) return r
+      const distance = haversineMeters(lat, lng, rLat, rLng)
+      return { ...r, distance, distanceText: formatDistanceText(distance) }
+    })
+    .sort((a, b) => a.distance - b.distance)
+}
+
+export async function geocodePlace(
+  placeName: string,
+  apiKey: string,
+  cityHint?: string,
+): Promise<{ lat: number; lng: number; name: string } | null> {
+  const url = new URL('https://restapi.amap.com/v3/geocode/geo')
+  url.searchParams.set('key', apiKey)
+  url.searchParams.set('address', placeName)
+  if (cityHint) {
+    const city = cityHint.replace(/市$/u, '')
+    url.searchParams.set('city', city)
+  }
+
+  const response = await fetch(url)
+  const data = (await response.json()) as {
+    status: string
+    geocodes?: Array<{ location: string; formatted_address?: string }>
+  }
+
+  if (data.status !== '1' || !data.geocodes?.[0]?.location) return null
+
+  const [lng, lat] = data.geocodes[0].location.split(',').map(Number)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+
+  return {
+    lat,
+    lng,
+    name: data.geocodes[0].formatted_address?.split(',')[0] || placeName,
   }
 }
 

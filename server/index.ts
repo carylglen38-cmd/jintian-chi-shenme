@@ -5,6 +5,7 @@ import cors from 'cors'
 import express from 'express'
 import { fetchIpLocation, fetchNearbyRestaurants, getMockRestaurants } from './amap.js'
 import { getRecommendations } from './ai.js'
+import { prepareRecommendRequest } from './recommendPrep.js'
 import type { RecommendRequest } from './types.js'
 
 dotenv.config({ override: false })
@@ -93,24 +94,42 @@ app.post('/api/recommend', async (req, res) => {
   }
 
   try {
+    const { req, locationAnchor, locationAnchorFailed } = await prepareRecommendRequest(body, {
+      amapKey: AMAP_KEY,
+      mockMode: MOCK_MODE,
+      userLat: body.userLat,
+      userLng: body.userLng,
+    })
+
+    if (!req.restaurants.length) {
+      res.status(400).json({
+        error: locationAnchor
+          ? `「${locationAnchor.name}」3km 内没有找到足够餐厅，试试换个地点描述`
+          : '没有可用的餐厅列表',
+      })
+      return
+    }
+
     const result = await getRecommendations(
       {
-        mood: body.mood || [],
-        tastes: body.tastes || [],
-        cuisines: body.cuisines || [],
-        budget: body.budget,
-        otherNotes: body.otherNotes,
-        historyHint: body.historyHint,
-        excludeNames: body.excludeNames,
-        cooldownNames: body.cooldownNames,
-        restaurants: body.restaurants,
+        mood: req.mood || [],
+        tastes: req.tastes || [],
+        cuisines: req.cuisines || [],
+        diningStyle: req.diningStyle,
+        budget: req.budget,
+        otherNotes: req.otherNotes,
+        historyHint: req.historyHint,
+        locationAnchor: req.locationAnchor,
+        excludeNames: req.excludeNames,
+        cooldownNames: req.cooldownNames,
+        restaurants: req.restaurants,
       },
       AI_API_KEY,
       AI_BASE_URL,
       AI_MODEL,
     )
 
-    res.json(result)
+    res.json({ ...result, locationAnchor, locationAnchorFailed, restaurants: req.restaurants })
   } catch (error) {
     const message = error instanceof Error ? error.message : '推荐失败'
     res.status(500).json({ error: message })
