@@ -9,12 +9,25 @@ const SYSTEM_PROMPT = `你是「今天吃什么」的餐饮推荐助手。用户
 规则：
 1. 只能从提供的餐厅列表中选择，禁止编造不存在的店名
 2. 优先考虑用户当前选择的菜系和口味，结合历史饮食习惯
-3. 不要只推荐最近的店；在符合口味的前提下兼顾不同距离，可包含 1-2 家稍远但更值得去的店
+3. 距离要分散：300m 以内最多选 1 家；至少 2 家应在 800m 以外；有更远选项时优先包含 1 家 1.5km 以上的店
 4. 一周内用户已吃过的店不要推荐
 5. 推荐理由要简短口语化，1-2 句话
 6. 必须返回合法 JSON：{"recommendations":[{"name":"店名","reason":"理由","score":0.95}]}
 7. score 范围 0-1，第一名最高
 8. 必须推荐 ${TOP_N} 家（列表足够时），且店名互不重复`
+
+interface DistanceBand {
+  match: (r: Restaurant) => boolean
+  min: number
+  max: number
+}
+
+const DISTANCE_BANDS: DistanceBand[] = [
+  { match: (r) => r.distance <= 300, min: 0, max: 1 },
+  { match: (r) => r.distance > 300 && r.distance <= 1000, min: 1, max: 2 },
+  { match: (r) => r.distance > 1000 && r.distance <= 2500, min: 1, max: 2 },
+  { match: (r) => r.distance > 2500, min: 1, max: 2 },
+]
 
 function scoreRestaurant(r: Restaurant, keywords: string): number {
   const text = `${r.name} ${r.type}`
@@ -26,6 +39,10 @@ function scoreRestaurant(r: Restaurant, keywords: string): number {
   return score
 }
 
+function getKeywords(req: RecommendRequest): string {
+  return [...req.cuisines, ...req.tastes, ...req.mood].join(' ')
+}
+
 function getBlockedNames(req: RecommendRequest): Set<string> {
   return new Set([...(req.excludeNames ?? []), ...(req.cooldownNames ?? [])])
 }
@@ -35,36 +52,91 @@ function filterPool(req: RecommendRequest): Restaurant[] {
   return req.restaurants.filter((r) => !blocked.has(r.name))
 }
 
-function stratifiedByDistance(ranked: Restaurant[], targetSize: number): Restaurant[] {
-  if (ranked.length <= targetSize) return ranked
+function sortByPreference(pool: Restaurant[], keywords: string): Restaurant[] {
+  return [...pool].sort((a, b) => scoreRestaurant(b, keywords) - scoreRestaurant(a, keywords))
+}
 
-  const near = ranked.filter((r) => r.distance <= 800)
-  const mid = ranked.filter((r) => r.distance > 800 && r.distance <= 2000)
-  const far = ranked.filter((r) => r.distance > 2000)
+function countInBand(picked: Restaurant[], band: DistanceBand): number {
+  return picked.filter(band.match).length
+}
 
-  const nNear = Math.round(targetSize * 0.3)
-  const nMid = Math.round(targetSize * 0.4)
-  const nFar = targetSize - nNear - nMid
+function selectDiverseTopN(pool: Restaurant[], keywords: string, n: number): Restaurant[] {
+  if (pool.length <= n) return sortByPreference(pool, keywords)
+
+  const bandPools = DISTANCE_BANDS.map((band) => ({
+    band,
+    items: sortByPreference(pool.filter(band.match), keywords),
+  }))
+
+  const picked: Restaurant[] = []
+  const pickedIds = new Set<string>()
+
+  const add = (r: Restaurant) => {
+    if (pickedIds.has(r.id)) return false
+    pickedIds.add(r.id)
+    picked.push(r)
+    return true
+  }
+
+  // 先从远到近满足各档最低名额，保证远距离有代表
+  for (const { band, items } of [...bandPools].reverse()) {
+    let count = countInBand(picked, band)
+    for (const r of items) {
+      if (picked.length >= n) break
+      if (count >= band.min) break
+      if (add(r)) count++
+    }
+  }
+
+  // 按偏好填充，同时遵守各档上限
+  const remaining = sortByPreference(
+    pool.filter((r) => !pickedIds.has(r.id)),
+    keywords,
+  )
+
+  for (const r of remaining) {
+    if (picked.length >= n) break
+    const band = DISTANCE_BANDS.find((b) => b.match(r))
+    if (band && countInBand(picked, band) >= band.max) continue
+    add(r)
+  }
+
+  // 名额未满则放宽上限
+  for (const r of remaining) {
+    if (picked.length >= n) break
+    add(r)
+  }
+
+  return picked.slice(0, n)
+}
+
+function stratifiedCandidates(pool: Restaurant[], keywords: string, targetSize: number): Restaurant[] {
+  if (pool.length <= targetSize) return sortByPreference(pool, keywords)
+
+  const quotas = [
+    { match: (r: Restaurant) => r.distance <= 300, ratio: 0.08 },
+    { match: (r: Restaurant) => r.distance > 300 && r.distance <= 1000, ratio: 0.22 },
+    { match: (r: Restaurant) => r.distance > 1000 && r.distance <= 2500, ratio: 0.35 },
+    { match: (r: Restaurant) => r.distance > 2500, ratio: 0.35 },
+  ]
 
   const result: Restaurant[] = []
   const seen = new Set<string>()
 
-  const addFrom = (arr: Restaurant[], limit: number) => {
-    let left = limit
-    for (const r of arr) {
-      if (left <= 0) break
+  for (const { match, ratio } of quotas) {
+    const limit = Math.max(1, Math.round(targetSize * ratio))
+    const items = sortByPreference(pool.filter(match), keywords)
+    let added = 0
+    for (const r of items) {
+      if (added >= limit) break
       if (seen.has(r.id)) continue
       seen.add(r.id)
       result.push(r)
-      left--
+      added++
     }
   }
 
-  addFrom(near, nNear)
-  addFrom(mid, nMid)
-  addFrom(far, nFar)
-
-  for (const r of ranked) {
+  for (const r of sortByPreference(pool, keywords)) {
     if (result.length >= targetSize) break
     if (!seen.has(r.id)) {
       seen.add(r.id)
@@ -79,24 +151,43 @@ function pickCandidates(req: RecommendRequest): Restaurant[] {
   const pool = filterPool(req)
   if (!pool.length) return req.restaurants.slice(0, CANDIDATE_SIZE)
 
-  const keywords = [...req.cuisines, ...req.tastes, ...req.mood].join(' ')
-  const ranked = pool
-    .map((r) => ({
-      r,
-      score: scoreRestaurant(r, keywords) - r.distance / 6000,
-    }))
-    .sort((a, b) => b.score - a.score)
-    .map((s) => s.r)
+  const keywords = getKeywords(req)
+  const sampled = stratifiedCandidates(pool, keywords, CANDIDATE_SIZE)
+  return sampled.length >= 20 ? sampled : sortByPreference(pool, keywords).slice(0, CANDIDATE_SIZE)
+}
 
-  const sampled = stratifiedByDistance(ranked, CANDIDATE_SIZE)
-  return sampled.length >= 20 ? sampled : pool.slice(0, CANDIDATE_SIZE)
+function formatCandidateList(candidates: Restaurant[]): string {
+  const groups = [
+    { title: '1.5km 以上', match: (r: Restaurant) => r.distance > 1500 },
+    { title: '800m–1.5km', match: (r: Restaurant) => r.distance > 800 && r.distance <= 1500 },
+    { title: '300m–800m', match: (r: Restaurant) => r.distance > 300 && r.distance <= 800 },
+    { title: '300m 以内（最多选 1 家）', match: (r: Restaurant) => r.distance <= 300 },
+  ]
+
+  const lines: string[] = []
+  const listed = new Set<string>()
+
+  for (const group of groups) {
+    const items = candidates.filter((r) => group.match(r) && !listed.has(r.id))
+    if (!items.length) continue
+    lines.push(`【${group.title}】`)
+    for (const r of items) {
+      listed.add(r.id)
+      lines.push(`- ${r.name}（${r.type}，${r.distanceText}）`)
+    }
+  }
+
+  for (const r of candidates) {
+    if (listed.has(r.id)) continue
+    lines.push(`- ${r.name}（${r.type}，${r.distanceText}）`)
+  }
+
+  return lines.join('\n')
 }
 
 function buildUserPrompt(req: RecommendRequest): string {
   const candidates = pickCandidates(req)
-  const restaurantList = candidates
-    .map((r) => `- ${r.name}（${r.type}，${r.distanceText}）`)
-    .join('\n')
+  const restaurantList = formatCandidateList(candidates)
 
   const lines = [
     `心情：${req.mood.length ? req.mood.join('、') : '随便'}`,
@@ -115,10 +206,10 @@ function buildUserPrompt(req: RecommendRequest): string {
 
   return `${lines.join('\n')}
 
-附近餐厅（共 ${req.restaurants.length} 家，以下是候选）：
+附近餐厅（共 ${req.restaurants.length} 家，按距离分段列出候选）：
 ${restaurantList}
 
-请推荐最适合的 ${TOP_N} 家，返回 JSON。`
+请推荐最适合的 ${TOP_N} 家，注意距离分散，返回 JSON。`
 }
 
 function parseRecommendations(
@@ -132,45 +223,39 @@ function parseRecommendations(
   const parsed = JSON.parse(jsonMatch[0]) as { recommendations?: Recommendation[] }
   const names = new Set(restaurants.map((r) => r.name))
 
-  const valid = (parsed.recommendations ?? [])
-    .filter((rec) => names.has(rec.name) && !blocked?.has(rec.name))
-    .slice(0, TOP_N)
+  const valid = (parsed.recommendations ?? []).filter(
+    (rec) => names.has(rec.name) && !blocked?.has(rec.name),
+  )
 
   if (!valid.length) throw new Error('AI 推荐结果无法匹配附近餐厅')
   return valid
 }
 
-function fallbackRecommend(req: RecommendRequest): Recommendation[] {
+function finalizeRecommendations(
+  aiRecs: Recommendation[] | null,
+  req: RecommendRequest,
+): Recommendation[] {
   const pool = filterPool(req)
-  const keywords = [...req.cuisines, ...req.tastes, ...req.mood].join(' ')
+  const keywords = getKeywords(req)
+  const selected = selectDiverseTopN(pool, keywords, TOP_N)
+  const aiByName = new Map((aiRecs ?? []).map((r) => [r.name, r]))
 
-  const scored = pool.map((r) => {
-    let score = Math.max(0.3, 1 - r.distance / 5000) + scoreRestaurant(r, keywords) * 0.15
-    const text = `${r.name} ${r.type}`
-    if (keywords.includes('不辣') && /川|湘|麻辣|辣/.test(text)) score -= 0.5
-    if (keywords.includes('辣') && /川|湘|麻辣|辣/.test(text)) score += 0.3
-    if (keywords.includes('日料') && /日|寿司|拉面/.test(text)) score += 0.4
-    if (keywords.includes('面食') && /面|饺|粉/.test(text)) score += 0.4
-    if (keywords.includes('火锅') && /火锅/.test(text)) score += 0.4
-    if (keywords.includes('烧烤') && /烧烤|烤肉|烤/.test(text)) score += 0.4
-    if (keywords.includes('小吃') && /小吃|麻辣烫|串/.test(text)) score += 0.3
-    if (keywords.includes('清淡') && /轻食|沙拉|粥/.test(text)) score += 0.3
-    return { restaurant: r, score: Math.max(0, score) }
+  return selected.map((r, i) => {
+    const ai = aiByName.get(r.name)
+    if (ai) return { ...ai, score: ai.score ?? Math.max(0.5, 0.95 - i * 0.08) }
+    return {
+      name: r.name,
+      reason:
+        i === 0
+          ? `${r.type}，${r.distanceText}，符合你的偏好`
+          : `备选：${r.type}，${r.distanceText}`,
+      score: Math.round(Math.max(0.5, 0.95 - i * 0.08) * 100) / 100,
+    }
   })
+}
 
-  scored.sort((a, b) => b.score - a.score)
-
-  const ranked = scored.map((s) => s.restaurant)
-  const diversified = stratifiedByDistance(ranked, TOP_N * 4)
-
-  return diversified.slice(0, TOP_N).map((restaurant, i) => ({
-    name: restaurant.name,
-    reason:
-      i === 0
-        ? `距离 ${restaurant.distanceText}，${restaurant.type}，符合你的偏好`
-        : `备选：${restaurant.type}，${restaurant.distanceText}`,
-    score: Math.round((scored.find((s) => s.restaurant.id === restaurant.id)?.score ?? 0) * 100) / 100,
-  }))
+function fallbackRecommend(req: RecommendRequest): Recommendation[] {
+  return finalizeRecommendations(null, req)
 }
 
 export async function getRecommendations(
@@ -213,8 +298,9 @@ export async function getRecommendations(
     const content = data.choices?.[0]?.message?.content
     if (!content) throw new Error('AI 无返回内容')
 
+    const aiRecs = parseRecommendations(content, req.restaurants, blocked)
     return {
-      recommendations: parseRecommendations(content, req.restaurants, blocked),
+      recommendations: finalizeRecommendations(aiRecs, req),
       usedMock: false,
     }
   } catch (error) {
