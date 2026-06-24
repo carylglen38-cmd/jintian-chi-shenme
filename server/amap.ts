@@ -115,7 +115,7 @@ export async function fetchNearbyRestaurants(
   const allPois: AmapPoi[] = []
   const seen = new Set<string>()
   let total = 0
-  const maxPages = 3
+  const maxPages = 12
 
   for (let page = 1; page <= maxPages; page++) {
     const { pois, total: count } = await fetchAroundPage(lat, lng, radius, apiKey, page)
@@ -128,17 +128,71 @@ export async function fetchNearbyRestaurants(
       }
     }
 
-    if (!pois.length || allPois.length >= total || allPois.length >= 75) break
+    if (!pois.length) break
+    if (allPois.length >= total) break
+
+    const mapped = allPois.map(mapPoi)
+    if (page >= 3 && hasDiverseDistancePool(mapped)) break
+    if (allPois.length >= 120) break
   }
 
   if (!allPois.length) {
     throw new Error('未找到附近餐厅')
   }
 
+  const restaurants = buildDiversifiedPool(allPois.map(mapPoi), 80)
+
   return {
-    restaurants: allPois.map(mapPoi).sort((a, b) => a.distance - b.distance),
+    restaurants,
     total: total || allPois.length,
   }
+}
+
+const POOL_BUCKETS = [
+  { min: 0, max: 400, quota: 10 },
+  { min: 400, max: 1200, quota: 20 },
+  { min: 1200, max: 2500, quota: 25 },
+  { min: 2500, max: Infinity, quota: 25 },
+] as const
+
+function countInPoolBucket(restaurants: Restaurant[], min: number, max: number): number {
+  return restaurants.filter((r) => r.distance >= min && r.distance < max).length
+}
+
+function hasDiverseDistancePool(restaurants: Restaurant[]): boolean {
+  return (
+    countInPoolBucket(restaurants, 1200, Infinity) >= 8 &&
+    countInPoolBucket(restaurants, 400, 1200) >= 8 &&
+    countInPoolBucket(restaurants, 0, 400) >= 5
+  )
+}
+
+function buildDiversifiedPool(restaurants: Restaurant[], maxTotal: number): Restaurant[] {
+  const sorted = [...restaurants].sort((a, b) => a.distance - b.distance)
+  const result: Restaurant[] = []
+  const used = new Set<string>()
+
+  for (const bucket of POOL_BUCKETS) {
+    const inBucket = sorted.filter((r) => r.distance >= bucket.min && r.distance < bucket.max)
+    let added = 0
+    for (const r of inBucket) {
+      if (added >= bucket.quota) break
+      if (used.has(r.id)) continue
+      used.add(r.id)
+      result.push(r)
+      added++
+    }
+  }
+
+  for (const r of sorted) {
+    if (result.length >= maxTotal) break
+    if (!used.has(r.id)) {
+      used.add(r.id)
+      result.push(r)
+    }
+  }
+
+  return result.slice(0, maxTotal)
 }
 
 const CITY_CENTERS: Record<string, { lat: number; lng: number; name: string }> = {

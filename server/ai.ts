@@ -101,13 +101,29 @@ function selectDiverseTopN(pool: Restaurant[], keywords: string, n: number): Res
     add(r)
   }
 
-  // 名额未满则放宽上限
+  // 名额未满时只从非近距档补齐，避免近店占满 Top5
   for (const r of remaining) {
     if (picked.length >= n) break
+    if (pickedIds.has(r.id)) continue
+    if (r.distance <= 300 && countInBand(picked, DISTANCE_BANDS[0]!) >= 1) continue
     add(r)
   }
 
-  return picked.slice(0, n)
+  return orderForDisplay(picked.slice(0, n), keywords)
+}
+
+function orderForDisplay(picked: Restaurant[], keywords: string): Restaurant[] {
+  if (picked.length <= 1) return picked
+
+  const sorted = sortByPreference(picked, keywords)
+  const farIdx = sorted.findIndex((r) => r.distance > 800)
+  if (farIdx > 0 && sorted[0]!.distance <= 300) {
+    const reordered = [...sorted]
+    const [farPick] = reordered.splice(farIdx, 1)
+    reordered.unshift(farPick!)
+    return reordered
+  }
+  return sorted
 }
 
 function stratifiedCandidates(pool: Restaurant[], keywords: string, targetSize: number): Restaurant[] {
