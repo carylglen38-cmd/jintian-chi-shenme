@@ -1,14 +1,27 @@
 import type { Recommendation, Restaurant } from './types'
 
-export async function fetchIpLocation(): Promise<{ lat: number; lng: number; city: string }> {
-  const response = await fetch('/api/location/ip')
-  const data = await response.json()
-
-  if (!response.ok) {
-    throw new Error(data.error || '网络定位失败')
+async function fetchJson<T>(url: string, init?: RequestInit, timeoutMs = 45000): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error((data as { error?: string }).error || '请求失败')
+    }
+    return data as T
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('请求超时，服务可能正在唤醒，请重试')
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
+}
 
-  return data
+export async function fetchIpLocation(): Promise<{ lat: number; lng: number; city: string }> {
+  return fetchJson('/api/location/ip')
 }
 
 export async function fetchRestaurants(lat: number, lng: number): Promise<{
@@ -22,14 +35,13 @@ export async function fetchRestaurants(lat: number, lng: number): Promise<{
     radius: '2000',
   })
 
-  const response = await fetch(`/api/restaurants?${params}`)
-  const data = await response.json()
-
-  if (!response.ok) {
-    throw new Error(data.error || '获取附近餐厅失败')
+  const url = `/api/restaurants?${params}`
+  try {
+    return await fetchJson(url)
+  } catch (firstError) {
+    await new Promise((r) => setTimeout(r, 2000))
+    return fetchJson(url)
   }
-
-  return data
 }
 
 export interface RecommendPayload {

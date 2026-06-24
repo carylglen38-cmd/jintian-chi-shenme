@@ -27,6 +27,19 @@ const MOCK_MODE =
   !AMAP_KEY ||
   AMAP_KEY.startsWith('your_')
 
+function getClientIp(req: express.Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for']
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0]?.trim()
+  }
+  if (Array.isArray(forwarded)) {
+    return forwarded[0]?.split(',')[0]?.trim()
+  }
+  return req.socket.remoteAddress?.replace(/^::ffff:/, '')
+}
+
+app.set('trust proxy', true)
+
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -36,9 +49,9 @@ app.get('/api/health', (_req, res) => {
   })
 })
 
-app.get('/api/location/ip', async (_req, res) => {
+app.get('/api/location/ip', async (req, res) => {
   try {
-    const location = await fetchIpLocation(AMAP_KEY)
+    const location = await fetchIpLocation(AMAP_KEY, getClientIp(req))
     res.json(location)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'IP 定位失败'

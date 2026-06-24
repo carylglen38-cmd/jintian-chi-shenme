@@ -68,7 +68,7 @@ function mapPoi(poi: AmapPoi): Restaurant {
     distance,
     distanceText: distance < 1000 ? `${distance}m` : `${(distance / 1000).toFixed(1)}km`,
     location: poi.location,
-    tel: poi.tel,
+    tel: Array.isArray(poi.tel) ? poi.tel[0] : poi.tel,
   }
 }
 
@@ -115,7 +115,7 @@ export async function fetchNearbyRestaurants(
   const allPois: AmapPoi[] = []
   const seen = new Set<string>()
   let total = 0
-  const maxPages = 8
+  const maxPages = 3
 
   for (let page = 1; page <= maxPages; page++) {
     const { pois, total: count } = await fetchAroundPage(lat, lng, radius, apiKey, page)
@@ -128,7 +128,7 @@ export async function fetchNearbyRestaurants(
       }
     }
 
-    if (!pois.length || allPois.length >= total || allPois.length >= 150) break
+    if (!pois.length || allPois.length >= total || allPois.length >= 75) break
   }
 
   if (!allPois.length) {
@@ -154,17 +154,22 @@ const CITY_CENTERS: Record<string, { lat: number; lng: number; name: string }> =
   '120000': { lat: 39.3434, lng: 117.3616, name: '天津市' },
 }
 
-export async function fetchIpLocation(apiKey?: string): Promise<{
+export async function fetchIpLocation(
+  apiKey?: string,
+  clientIp?: string,
+): Promise<{
   lat: number
   lng: number
   city: string
 }> {
   const hasAmapKey = Boolean(apiKey && !apiKey.startsWith('your_'))
+  const ip = clientIp?.replace(/^::ffff:/, '')
 
-  if (hasAmapKey) {
+  if (hasAmapKey && ip) {
     try {
       const url = new URL('https://restapi.amap.com/v3/ip')
       url.searchParams.set('key', apiKey!)
+      url.searchParams.set('ip', ip)
       const response = await fetch(url)
       const data = (await response.json()) as {
         status: string
@@ -192,7 +197,10 @@ export async function fetchIpLocation(apiKey?: string): Promise<{
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 5000)
-    const response = await fetch('http://ip-api.com/json/?lang=zh-CN', {
+    const ipApiUrl = ip
+      ? `http://ip-api.com/json/${encodeURIComponent(ip)}?lang=zh-CN`
+      : 'http://ip-api.com/json/?lang=zh-CN'
+    const response = await fetch(ipApiUrl, {
       signal: controller.signal,
     })
     clearTimeout(timer)

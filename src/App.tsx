@@ -49,7 +49,7 @@ export default function App() {
   const [recordedName, setRecordedName] = useState<string | null>(null)
 
   const loadRestaurants = useCallback(async (latitude: number, longitude: number) => {
-    setLoadingMessage('正在搜索附近餐厅…')
+    setLoadingMessage('正在搜索附近餐厅…（首次打开可能需等几秒）')
     setStep('loading')
     setError(null)
     try {
@@ -65,6 +65,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    fetch('/api/health').catch(() => {})
     requestLocation()
   }, [requestLocation])
 
@@ -292,21 +293,33 @@ export default function App() {
 
             {step === 'error' && (
               <div className="py-12 text-center">
-                <p className="mb-4 text-stone-600">{error}</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (lat !== null && lng !== null) {
-                      loadRestaurants(lat, lng)
-                    } else {
-                      requestLocation()
-                      setStep('locating')
-                    }
-                  }}
-                  className="rounded-full bg-brand-500 px-6 py-3 font-semibold text-white"
-                >
-                  重试
-                </button>
+                <p className="mb-2 text-stone-600">{error}</p>
+                <p className="mb-4 text-xs text-stone-400">
+                  免费服务器休眠后首次打开较慢，多等几秒或试网络定位
+                </p>
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (lat !== null && lng !== null) {
+                        loadRestaurants(lat, lng)
+                      } else {
+                        requestLocation()
+                        setStep('locating')
+                      }
+                    }}
+                    className="block w-full rounded-full bg-brand-500 px-6 py-3 font-semibold text-white"
+                  >
+                    重试
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleIpLocation}
+                    className="block w-full rounded-full bg-white px-6 py-3 font-semibold text-stone-700 ring-1 ring-stone-200"
+                  >
+                    使用网络定位
+                  </button>
+                </div>
               </div>
             )}
           </>
