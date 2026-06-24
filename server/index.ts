@@ -6,7 +6,7 @@ import express from 'express'
 import { fetchIpLocation, fetchNearbyRestaurants, getMockRestaurants } from './amap.js'
 import { getRecommendations } from './ai.js'
 import { prepareRecommendRequest } from './recommendPrep.js'
-import type { RecommendRequest } from './types.js'
+import type { DecideRequest, RecommendRequest } from './types.js'
 
 dotenv.config({ override: false })
 
@@ -85,6 +85,92 @@ app.get('/api/restaurants', async (req, res) => {
   }
 })
 
+async function runRecommendPipeline(body: RecommendRequest) {
+  const { req, locationAnchor, locationAnchorFailed } = await prepareRecommendRequest(body, {
+    amapKey: AMAP_KEY,
+    mockMode: MOCK_MODE,
+    userLat: body.userLat,
+    userLng: body.userLng,
+  })
+
+  if (!req.restaurants.length) {
+    const err = new Error(
+      locationAnchor
+        ? `「${locationAnchor.name}」3km 内没有找到足够餐厅，试试换个地点描述`
+        : '没有可用的餐厅列表',
+    ) as Error & { status?: number }
+    err.status = 400
+    throw err
+  }
+
+  const result = await getRecommendations(
+    {
+      mood: req.mood || [],
+      tastes: req.tastes || [],
+      cuisines: req.cuisines || [],
+      diningStyle: req.diningStyle,
+      budget: req.budget,
+      otherNotes: req.otherNotes,
+      historyHint: req.historyHint,
+      locationAnchor: req.locationAnchor,
+      excludeNames: req.excludeNames,
+      cooldownNames: req.cooldownNames,
+      restaurants: req.restaurants,
+    },
+    AI_API_KEY,
+    AI_BASE_URL,
+    AI_MODEL,
+  )
+
+  return { ...result, locationAnchor, locationAnchorFailed, restaurants: req.restaurants }
+}
+
+app.post('/api/decide', async (req, res) => {
+  const body = req.body as DecideRequest
+  const lat = Number(body.lat)
+  const lng = Number(body.lng)
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    res.status(400).json({ error: '需要位置信息才能找店，请允许定位或使用网络定位' })
+    return
+  }
+
+  try {
+    let restaurants
+    let mockMode = MOCK_MODE
+    let count = 0
+
+    if (MOCK_MODE) {
+      restaurants = getMockRestaurants(lat, lng)
+      count = restaurants.length
+    } else {
+      const fetched = await fetchNearbyRestaurants(lat, lng, 4000, AMAP_KEY!)
+      restaurants = fetched.restaurants
+      count = fetched.total
+    }
+
+    const result = await runRecommendPipeline({
+      mood: body.mood || [],
+      tastes: body.tastes || [],
+      cuisines: body.cuisines || [],
+      diningStyle: body.diningStyle,
+      budget: body.budget,
+      otherNotes: body.otherNotes,
+      historyHint: body.historyHint,
+      locationCity: body.locationCity,
+      userLat: lat,
+      userLng: lng,
+      restaurants,
+    })
+
+    res.json({ ...result, mockMode, count })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '推荐失败'
+    const status = (error as Error & { status?: number }).status ?? 500
+    res.status(status).json({ error: message })
+  }
+})
+
 app.post('/api/recommend', async (req, res) => {
   const body = req.body as RecommendRequest
 
@@ -94,45 +180,12 @@ app.post('/api/recommend', async (req, res) => {
   }
 
   try {
-    const { req, locationAnchor, locationAnchorFailed } = await prepareRecommendRequest(body, {
-      amapKey: AMAP_KEY,
-      mockMode: MOCK_MODE,
-      userLat: body.userLat,
-      userLng: body.userLng,
-    })
-
-    if (!req.restaurants.length) {
-      res.status(400).json({
-        error: locationAnchor
-          ? `「${locationAnchor.name}」3km 内没有找到足够餐厅，试试换个地点描述`
-          : '没有可用的餐厅列表',
-      })
-      return
-    }
-
-    const result = await getRecommendations(
-      {
-        mood: req.mood || [],
-        tastes: req.tastes || [],
-        cuisines: req.cuisines || [],
-        diningStyle: req.diningStyle,
-        budget: req.budget,
-        otherNotes: req.otherNotes,
-        historyHint: req.historyHint,
-        locationAnchor: req.locationAnchor,
-        excludeNames: req.excludeNames,
-        cooldownNames: req.cooldownNames,
-        restaurants: req.restaurants,
-      },
-      AI_API_KEY,
-      AI_BASE_URL,
-      AI_MODEL,
-    )
-
-    res.json({ ...result, locationAnchor, locationAnchorFailed, restaurants: req.restaurants })
+    const result = await runRecommendPipeline(body)
+    res.json(result)
   } catch (error) {
     const message = error instanceof Error ? error.message : '推荐失败'
-    res.status(500).json({ error: message })
+    const status = (error as Error & { status?: number }).status ?? 500
+    res.status(status).json({ error: message })
   }
 })
 

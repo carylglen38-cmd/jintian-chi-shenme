@@ -38,10 +38,26 @@ export interface Recommendation {
   score: number
 }
 
+export interface DecideRequest {
+  lat: number
+  lng: number
+  mood: string[]
+  tastes: string[]
+  cuisines: string[]
+  diningStyle?: string
+  budget?: string
+  otherNotes?: string
+  historyHint?: string
+  locationCity?: string
+}
+
 export interface RecommendResponse {
   recommendations: Recommendation[]
   usedMock?: boolean
   fallbackReason?: string
   locationAnchor?: { name: string }
   locationAnchorFailed?: boolean
+  restaurants?: Restaurant[]
+  mockMode?: boolean
+  count?: number
 }

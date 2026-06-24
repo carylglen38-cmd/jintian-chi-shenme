@@ -60,6 +60,54 @@ export interface RecommendPayload {
   restaurants: Restaurant[]
 }
 
+export interface DecidePayload {
+  lat: number
+  lng: number
+  mood: string[]
+  tastes: string[]
+  cuisines: string[]
+  diningStyle?: string
+  budget?: string
+  otherNotes?: string
+  historyHint?: string
+  locationCity?: string
+}
+
+export async function fetchDecide(payload: DecidePayload): Promise<{
+  recommendations: Recommendation[]
+  usedMock: boolean
+  fallbackReason?: string
+  locationAnchor?: { name: string }
+  locationAnchorFailed?: boolean
+  restaurants: Restaurant[]
+  mockMode: boolean
+  count: number
+}> {
+  return fetchJson('/api/decide', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getFreshLocation(
+  timeoutMs = 4000,
+): Promise<{ lat: number; lng: number } | null> {
+  if (!navigator.geolocation || !window.isSecureContext) return null
+  try {
+    const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: false,
+        timeout: timeoutMs,
+        maximumAge: 60000,
+      })
+    })
+    return { lat: position.coords.latitude, lng: position.coords.longitude }
+  } catch {
+    return null
+  }
+}
+
 export async function fetchRecommendations(
   payload: RecommendPayload,
 ): Promise<{
@@ -88,34 +136,35 @@ export async function fetchRecommendations(
 export function openNavigation(
   restaurant: Restaurant,
   userLocation?: { lat: number; lng: number } | null,
-) {
+): { hasOrigin: boolean } {
   const parts = restaurant.location.split(',')
   const lng = Number(parts[0])
   const lat = Number(parts[1])
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { hasOrigin: false }
 
   const destName = encodeURIComponent(restaurant.name)
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
   const isMac = /Mac/.test(navigator.userAgent) && !isIOS
+  const isAndroid = /Android/i.test(navigator.userAgent)
+  const hasOrigin = Boolean(userLocation)
 
   const amapNav = buildAmapNavUrl(lng, lat, restaurant.name, userLocation)
 
-  // Mac 上优先 Apple 地图路线（步行导航到终点）
   if (isMac) {
     const appleNav = userLocation
       ? `https://maps.apple.com/?saddr=${userLocation.lat},${userLocation.lng}&daddr=${lat},${lng}&q=${destName}&dirflg=w`
       : `https://maps.apple.com/?daddr=${lat},${lng}&q=${destName}&dirflg=w`
     window.open(appleNav, '_blank')
-    return
+    return { hasOrigin }
   }
 
-  // 手机 / 其他：高德路线规划（callnative=1 会尝试唤起 App 并设好终点）
-  if (isIOS) {
+  if (isIOS || isAndroid) {
     window.location.href = amapNav
-    return
+    return { hasOrigin }
   }
 
   window.open(amapNav, '_blank')
+  return { hasOrigin }
 }
 
 function buildAmapNavUrl(

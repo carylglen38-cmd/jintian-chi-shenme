@@ -1,42 +1,45 @@
-import type { Recommendation, Restaurant } from '../types'
+import type { Recommendation, Restaurant } from './types'
 
 interface RestaurantCardProps {
   recommendation: Recommendation
   restaurant?: Restaurant
-  rank: number
-  onNavigate?: () => void
+  selected: boolean
+  onSelect: () => void
 }
 
-const RANK_STYLES = [
-  'ring-2 ring-brand-400 bg-gradient-to-br from-brand-50 to-white',
-  'bg-white ring-1 ring-stone-200',
-  'bg-white ring-1 ring-stone-200',
-]
-
-const RANK_LABELS = ['首选', '推荐', '推荐', '推荐', '推荐']
-
-export function RestaurantCard({ recommendation, restaurant, rank, onNavigate }: RestaurantCardProps) {
-  const isTop = rank === 0
-
+export function RestaurantCard({
+  recommendation,
+  restaurant,
+  selected,
+  onSelect,
+}: RestaurantCardProps) {
   return (
     <article
-      className={`rounded-2xl p-4 transition-all ${RANK_STYLES[rank] ?? RANK_STYLES[2]} ${
-        isTop ? 'shadow-lg shadow-brand-100' : ''
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect()
+        }
+      }}
+      className={`cursor-pointer rounded-2xl p-4 transition-all active:scale-[0.99] ${
+        selected
+          ? 'ring-2 ring-brand-400 bg-gradient-to-br from-brand-50 to-white shadow-lg shadow-brand-100'
+          : 'bg-white ring-1 ring-stone-200 hover:ring-stone-300'
       }`}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div>
-          {isTop && (
+          {selected ? (
             <span className="mb-1 inline-block rounded-full bg-brand-500 px-2 py-0.5 text-xs font-semibold text-white">
-              今天就吃这家
+              就这家
             </span>
+          ) : (
+            <span className="mb-1 inline-block text-xs font-medium text-stone-400">都很合适</span>
           )}
-          {!isTop && (
-            <span className="mb-1 inline-block text-xs font-medium text-stone-400">
-              {RANK_LABELS[rank]}
-            </span>
-          )}
-          <h3 className={`font-bold text-stone-800 ${isTop ? 'text-xl' : 'text-lg'}`}>
+          <h3 className={`font-bold text-stone-800 ${selected ? 'text-xl' : 'text-lg'}`}>
             {recommendation.name}
           </h3>
         </div>
@@ -53,23 +56,9 @@ export function RestaurantCard({ recommendation, restaurant, rank, onNavigate }:
         </p>
       )}
 
-      <p className={`leading-relaxed ${isTop ? 'text-stone-700' : 'text-sm text-stone-600'}`}>
+      <p className={`leading-relaxed ${selected ? 'text-stone-700' : 'text-sm text-stone-600'}`}>
         {recommendation.reason}
       </p>
-
-      {onNavigate && (
-        <button
-          type="button"
-          onClick={onNavigate}
-          className={`mt-3 w-full rounded-xl py-2.5 text-sm font-semibold transition-colors ${
-            isTop
-              ? 'bg-brand-500 text-white hover:bg-brand-600'
-              : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
-          }`}
-        >
-          去这家！
-        </button>
-      )}
     </article>
   )
 }
